@@ -4,13 +4,13 @@
 #include <Ticker.h>
 
 // Define the actual WiFi credentials in the double quotations.
-#define WIFI_SSID "insert ssid here"
-#define WIFI_PASSWORD "insert password here"
+String WIFI_SSID = "insert ssid here";
+String WIFI_PASSWORD = "insert password here";
 
 // MQTT Broker details
-#define MQTT_HOST IPAddress(192,168,0,190)
-#define MQTT_PORT 1883
-#define MQTT_TOPIC "test/temp" /* Topic */
+IPAddress MQTT_HOST(10,174,108,143); /* IP address of the MQTT broker */
+uint16_t MQTT_PORT = 1883;
+auto MQTT_TOPIC = "test/temp"; /* Topic */
 
 // Objects
 AsyncMqttClient mqttClient;
@@ -39,13 +39,18 @@ void onMqttSubscribe(uint16_t packetId, uint8_t qos);
 void onMqttUnsubscribe(uint16_t packetId);
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total);
 
+void setWiFi(String ssid, String password) {
+  WIFI_SSID = ssid;
+  WIFI_PASSWORD = password;
+}
+
 void startMqttService(IPAddress mqttHost = MQTT_HOST, uint16_t mqttPort = MQTT_PORT, String wifiSSID = WIFI_SSID, String wifiPassword = WIFI_PASSWORD) {
   WiFi.onEvent(WiFiEvent); //Register WiFi event function
 
+  mqttClient.setServer(mqttHost, mqttPort);
   mqttClient.onConnect(onMqttConnect);
   mqttClient.onDisconnect(onMqttDisconnect);
   mqttClient.onPublish(onMqttPublish);
-  mqttClient.setServer(mqttHost, mqttPort);
 
   mqttClient.onSubscribe(onMqttSubscribe);
   mqttClient.onUnsubscribe(onMqttUnsubscribe);
@@ -91,6 +96,11 @@ void onMqttConnect(bool sessionPresent) {
   Serial.println("Connected to MQTT.");
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
+
+  uint16_t packetIdSub = mqttClient.subscribe("test", 0);
+
+  Serial.print("Subscribing at QoS 0, packetId: ");
+  Serial.println(packetIdSub);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -143,19 +153,8 @@ void onMqttUnsubscribe(uint16_t packetId) {
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  Serial.println("Publish received.");
-  Serial.print("  topic: ");
-  Serial.println(topic);
-  Serial.print("  qos: ");
-  Serial.println(properties.qos);
-  Serial.print("  dup: ");
-  Serial.println(properties.dup);
-  Serial.print("  retain: ");
-  Serial.println(properties.retain);
-  Serial.print("  len: ");
-  Serial.println(len);
-  Serial.print("  index: ");
-  Serial.println(index);
-  Serial.print("  total: ");
-  Serial.println(total);
+  char message[len + 1];
+  memcpy(message, payload, len);
+  message[len] = '\0';
+  Serial.println(message);
 }

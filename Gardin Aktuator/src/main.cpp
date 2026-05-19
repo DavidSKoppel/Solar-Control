@@ -1,16 +1,19 @@
 #include <Arduino.h>
 #include <Stepper.h>
 #include "mqtt.hpp"
+
 // Defines the number of steps per rotation
 const int stepsPerRevolution = 2048;
+
 // Creates an instance of stepper class
 // Pins entered in sequence IN1-IN3-IN2-IN4 for proper step sequence
 Stepper myStepper = Stepper(stepsPerRevolution, 27, 12, 13, 14);
 
 void setup() {
   Serial.begin(115200); // initialize serial
-  //startMqttService(); // initialize MQTT service
-
+  setWiFi("Emil's Galaxy S22 Ultra", "gruppe7!"); // set WiFi credentials
+  startMqttService(); // initialize MQTT service
+  
   myStepper.setSpeed(10); // 15 RPM is the maximum speed for this motor, but it can be set lower to reduce noise and increase torque
   myStepper.step(stepsPerRevolution);
 }
