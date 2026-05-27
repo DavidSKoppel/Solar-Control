@@ -8,7 +8,7 @@ String WIFI_SSID = "insert ssid here";
 String WIFI_PASSWORD = "insert password here";
 
 // MQTT Broker details
-IPAddress MQTT_HOST(192,168,1,113); /* IP address of the MQTT broker */
+IPAddress MQTT_HOST(192,168,1,100); /* IP address of the MQTT broker */
 uint16_t MQTT_PORT = 1883;
 auto MQTT_TOPIC = "test"; /* Topic */
 
@@ -21,8 +21,6 @@ Ticker publishRetryTimer;
 // Global variables
 String deviceName = "insert device name here";
 String lastMessage = "insert initial message here";
-unsigned long previousMillis = 0;
-const long interval = 10000;
 bool messageAcknowledged = true;
 uint16_t lastPacketId = 0;
 
@@ -38,10 +36,8 @@ void publishMessage(String message);
 void onMqttSubscribe(uint16_t packetId, uint8_t qos);
 void onMqttUnsubscribe(uint16_t packetId);
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total);
-
-void setWiFi(String ssid, String password) {
-  WIFI_SSID = ssid;
-  WIFI_PASSWORD = password;
+void setTopic(const char* topic) {
+  MQTT_TOPIC = topic;
 }
 
 void startMqttService(IPAddress mqttHost = MQTT_HOST, uint16_t mqttPort = MQTT_PORT, String wifiSSID = WIFI_SSID, String wifiPassword = WIFI_PASSWORD) {
@@ -129,7 +125,7 @@ void retryPublish() {
 }
 
 void publishMessage(String message) {
-  lastPacketId = mqttClient.publish(MQTT_TOPIC, 1, true, message.c_str());
+  lastPacketId = mqttClient.publish(MQTT_TOPIC, 0, true, message.c_str());
   messageAcknowledged = false;
   Serial.printf("Publishing on topic %s at QoS 1, packetId: %i ", MQTT_TOPIC, lastPacketId);
   Serial.printf("Message: %s\n", message.c_str());
