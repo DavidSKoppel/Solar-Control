@@ -1,92 +1,281 @@
 #include <Arduino.h>
 #include <Stepper.h>
+#include <ArduinoJson.h>
 #include "mqtt.hpp"
 
-// Defines the number of steps per rotation
-const int stepsPerRevolution = 2048;
+// --------------------------------------------------
+// WiFi
+// --------------------------------------------------
 
-auto temperature = 20.0; // Variable to store the temperature value
-auto lightIntensity = 700.0; // Variable to store the light intensity value
+#define WIFI_SSID     "dd-wrt"
+#define WIFI_PASSWORD "Admin123"
+
+// --------------------------------------------------
+// MQTT
+// --------------------------------------------------
+
+#define MQTT_HOST IPAddress(192,168,1,100)
+#define MQTT_PORT 1883
+
+#define MQTT_TOPIC_ENV "sensors/environment"
+#define MQTT_TOPIC_VAR "sensors/variables"
+
+// --------------------------------------------------
+// Stepper Configuration
+// --------------------------------------------------
+
+const int STEPS_PER_REVOLUTION = 2048;
+const int MAX_STEPS = STEPS_PER_REVOLUTION * 10.25;
+
+Stepper myStepper(
+    STEPS_PER_REVOLUTION,
+    27,   // IN1
+    12,   // IN3
+    13,   // IN2
+    14    // IN4
+);
+
+// --------------------------------------------------
+// Device State
+// --------------------------------------------------
+
+String deviceId;
+
+float temperatureThreshold = 20.0;
+float lightThreshold = 700.0;
+
+bool variablesRequested = false;
 
 bool moveRequested = false;
-int currentSteps = 0;
 int stepsToMove = 0;
 
-// Creates an instance of stepper class
-// Pins entered in sequence IN1-IN3-IN2-IN4 for proper step sequence
-Stepper myStepper = Stepper(stepsPerRevolution, 27, 12, 13, 14);
+int currentSteps = 0;
 
-void driveMotor(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  char message[len + 1];
-  memcpy(message, payload, len);
-  message[len] = '\0';
-  Serial.print("MQTT message arrived on topic ");
-  Serial.println(topic);
-  Serial.print("Payload: ");
-  Serial.println(message);
+// --------------------------------------------------
+// Helper Functions
+// --------------------------------------------------
 
-  float receivedTemperature = 0.0;
-  float receivedLight = 0.0;
-  bool hasTemperature = false;
-  bool hasLight = false;
+void requestVariables()
+{
+    JsonDocument doc;
 
-  char* found;
-  found = strstr(message, "temperature");
-  if (found) {
-    found = strchr(found, ':');
-    if (found) {
-      receivedTemperature = atof(found + 1);
-      hasTemperature = true;
-    }
-  }
+    doc["request"] = "variables";
+    doc["device"] = deviceId;
 
-  found = strstr(message, "light");
-  if (found) {
-    found = strchr(found, ':');
-    if (found) {
-      receivedLight = atof(found + 1);
-      hasLight = true;
-    }
-  }
+    String payload;
+    serializeJson(doc, payload);
 
-  Serial.print("Parsed temperature = ");
-  Serial.println(receivedTemperature);
-  Serial.print("Parsed light = ");
-  Serial.println(receivedLight);
+    mqttClient.publish(
+        MQTT_TOPIC_VAR,
+        1,
+        false,
+        payload.c_str());
 
-  bool exceedTemperature = hasTemperature && receivedTemperature > temperature;
-  bool exceedLight = hasLight && receivedLight > lightIntensity;
-
-  if (exceedTemperature || exceedLight) {
-    Serial.println("Threshold exceeded -> rotating stepper.");
-    moveRequested = true;
-    stepsToMove = stepsPerRevolution*12; // Set the number of steps to move
-    //myStepper.setSpeed(10);
-    //myStepper.step(stepsPerRevolution);
-  }
-  else {
-    Serial.println("Threshold below -> rotating stepper.");
-    moveRequested = true;
-    stepsToMove = -stepsPerRevolution*12; // Set the number of steps to move
-    //myStepper.setSpeed(10);
-    //myStepper.step(-stepsPerRevolution);
-  }
+    Serial.println("Requested variables");
 }
 
-void setup() {
-  Serial.begin(115200); // initialize serial
-  //setWiFi("Tod's Tavern", "Lucky1808"); // set WiFi credentials
-  setWiFi("dd-wrt", "Admin123"); // set WiFi credentials
-  startMqttService(); // initialize MQTT service
-  mqttClient.onMessage(driveMotor);
+bool isTargetDevice(const String& target)
+{
+    return target.equalsIgnoreCase("all") ||
+           target.equalsIgnoreCase(deviceId);
 }
 
-void loop() {
-  if (moveRequested)
-  {
-    moveRequested = false;
+void scheduleClose()
+{
+    if (currentSteps >= MAX_STEPS)
+        return;
+
+    moveRequested = true;
+    stepsToMove = MAX_STEPS;
+}
+
+void scheduleOpen()
+{
+    if (currentSteps <= 0)
+        return;
+
+    moveRequested = true;
+    stepsToMove = -MAX_STEPS;
+}
+
+// --------------------------------------------------
+// Variables Topic Handler
+// --------------------------------------------------
+
+void handleVariables(JsonDocument& doc)
+{
+    String target = doc["device"] | "";
+
+    if (!isTargetDevice(target))
+    {
+        Serial.println("Configuration not for this device");
+        return;
+    }
+
+    if (doc["temperatureThreshold"].is<float>())
+    {
+        temperatureThreshold =
+            doc["temperatureThreshold"];
+
+        Serial.print("Temperature threshold set to: ");
+        Serial.println(temperatureThreshold);
+    }
+
+    if (doc["lightThreshold"].is<float>())
+    {
+        lightThreshold =
+            doc["lightThreshold"];
+
+        Serial.print("Light threshold set to: ");
+        Serial.println(lightThreshold);
+    }
+
+    publishMessage(
+        String("Variables applied on ") + deviceId);
+}
+
+// --------------------------------------------------
+// Environment Topic Handler
+// --------------------------------------------------
+
+void handleEnvironment(JsonDocument& doc)
+{
+    float temperature =
+        doc["temperature"] | NAN;
+
+    float light =
+        doc["light"] | NAN;
+
+    Serial.println("----- Sensor Reading -----");
+
+    if (!isnan(temperature))
+    {
+        Serial.print("Temperature: ");
+        Serial.println(temperature);
+    }
+
+    if (!isnan(light))
+    {
+        Serial.print("Light: ");
+        Serial.println(light);
+    }
+
+    bool tempExceeded =
+        !isnan(temperature) &&
+        temperature > temperatureThreshold;
+
+    bool lightExceeded =
+        !isnan(light) &&
+        light > lightThreshold;
+
+    if (tempExceeded || lightExceeded)
+    {
+        Serial.println("Threshold exceeded -> CLOSE");
+
+        scheduleClose();
+    }
+    else
+    {
+        Serial.println("Threshold normal -> OPEN");
+
+        scheduleOpen();
+    }
+}
+
+// --------------------------------------------------
+// MQTT Callback
+// --------------------------------------------------
+
+void OnMessageReceived(
+    char* topic,
+    char* payload,
+    AsyncMqttClientMessageProperties properties,
+    size_t len,
+    size_t index,
+    size_t total)
+{
+    JsonDocument doc;
+
+    DeserializationError error =
+        deserializeJson(doc, payload, len);
+
+    if (error)
+    {
+        Serial.print("JSON parse failed: ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    Serial.println();
+    Serial.print("Message received on: ");
+    Serial.println(topic);
+
+    if (strcmp(topic, MQTT_TOPIC_VAR) == 0)
+    {
+        handleVariables(doc);
+    }
+    else if (strcmp(topic, MQTT_TOPIC_ENV) == 0)
+    {
+        handleEnvironment(doc);
+    }
+}
+
+// --------------------------------------------------
+// Setup
+// --------------------------------------------------
+
+void setup()
+{
+    Serial.begin(115200);
+
+    addSubscriptionTopic(MQTT_TOPIC_ENV);
+    addSubscriptionTopic(MQTT_TOPIC_VAR);
+
+    startMqttService(
+        MQTT_HOST,
+        MQTT_PORT,
+        WIFI_SSID,
+        WIFI_PASSWORD);
+
+    mqttClient.onMessage(OnMessageReceived);
+
     myStepper.setSpeed(10);
-    myStepper.step(stepsToMove);  // now outside MQTT callback
-    stepsToMove = 0; // reset steps to move after executing
-  }
+
+    deviceId = WiFi.macAddress();
+
+    Serial.print("Device ID: ");
+    Serial.println(deviceId);
+}
+
+// --------------------------------------------------
+// Main Loop
+// --------------------------------------------------
+
+void loop()
+{
+    // Request configuration once after MQTT connects
+    if (!variablesRequested &&
+        mqttClient.connected())
+    {
+        requestVariables();
+        variablesRequested = true;
+    }
+
+    // Execute motor movement outside MQTT callback
+    if (moveRequested)
+    {
+        moveRequested = false;
+
+        Serial.print("Moving stepper: ");
+        Serial.println(stepsToMove);
+
+        myStepper.step(stepsToMove);
+
+        currentSteps += stepsToMove;
+
+        Serial.print("Current position: ");
+        Serial.println(currentSteps);
+
+        stepsToMove = 0;
+    }
 }

@@ -4,13 +4,18 @@
 #include <Ticker.h>
 
 // Define the actual WiFi credentials in the double quotations.
-String WIFI_SSID = "insert ssid here";
-String WIFI_PASSWORD = "insert password here";
+auto WIFI_SSID = "insert ssid here";
+auto WIFI_PASSWORD = "insert password here";
 
 // MQTT Broker details
-IPAddress MQTT_HOST(192,168,1,113); /* IP address of the MQTT broker */
-uint16_t MQTT_PORT = 1883;
-auto MQTT_TOPIC = "test"; /* Topic */
+auto MQTT_HOST = IPAddress(192,168,1,100);
+auto MQTT_PORT = 1883;
+auto MQTT_TOPIC = "test/temp"; /* Topic */
+
+// Dynamic subscription list
+const int MAX_SUB_TOPICS = 12;
+String SUB_TOPICS[MAX_SUB_TOPICS];
+int subTopicCount = 0;
 
 // Objects
 AsyncMqttClient mqttClient;
@@ -19,10 +24,7 @@ Ticker wifiReconnectTimer;
 Ticker publishRetryTimer;
 
 // Global variables
-String deviceName = "insert device name here";
 String lastMessage = "insert initial message here";
-unsigned long previousMillis = 0;
-const long interval = 10000;
 bool messageAcknowledged = true;
 uint16_t lastPacketId = 0;
 
@@ -38,23 +40,29 @@ void publishMessage(String message);
 void onMqttSubscribe(uint16_t packetId, uint8_t qos);
 void onMqttUnsubscribe(uint16_t packetId);
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total);
+void addSubscriptionTopic(const char * topic);
 
-void setWiFi(String ssid, String password) {
-  WIFI_SSID = ssid;
-  WIFI_PASSWORD = password;
+// Register a topic to subscribe to when MQTT connects (stored in memory)
+void addSubscriptionTopic(const char * topic) {
+  if (topic == nullptr) return;
+  if (subTopicCount >= MAX_SUB_TOPICS) {
+    Serial.println("Subscription list full, cannot add topic");
+    return;
+  }
+  SUB_TOPICS[subTopicCount++] = String(topic);
 }
 
 void startMqttService(IPAddress mqttHost = MQTT_HOST, uint16_t mqttPort = MQTT_PORT, String wifiSSID = WIFI_SSID, String wifiPassword = WIFI_PASSWORD) {
   WiFi.onEvent(WiFiEvent); //Register WiFi event function
 
-  mqttClient.setServer(mqttHost, mqttPort);
   mqttClient.onConnect(onMqttConnect);
   mqttClient.onDisconnect(onMqttDisconnect);
   mqttClient.onPublish(onMqttPublish);
+  mqttClient.setServer(mqttHost, mqttPort);
 
   mqttClient.onSubscribe(onMqttSubscribe);
   mqttClient.onUnsubscribe(onMqttUnsubscribe);
-  // mqttClient.onMessage(onMqttMessage);
+  mqttClient.onMessage(onMqttMessage);
 
   connectToWifi(wifiSSID, wifiPassword); // Start the WiFi connection process
 }
@@ -96,11 +104,15 @@ void onMqttConnect(bool sessionPresent) {
   Serial.println("Connected to MQTT.");
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
-
-  uint16_t packetIdSub = mqttClient.subscribe(MQTT_TOPIC, 0);
-
-  Serial.print("Subscribing at QoS 0, packetId: ");
-  Serial.println(packetIdSub);
+  // Subscribe to all registered topics
+  for (int i = 0; i < subTopicCount; ++i) {
+    const char* t = SUB_TOPICS[i].c_str();
+    uint16_t packetIdSub = mqttClient.subscribe(t, 0);
+    Serial.print("Subscribing to topic: ");
+    Serial.print(t);
+    Serial.print("  packetId: ");
+    Serial.println(packetIdSub);
+  }
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -132,7 +144,7 @@ void publishMessage(String message) {
   lastPacketId = mqttClient.publish(MQTT_TOPIC, 1, true, message.c_str());
   messageAcknowledged = false;
   Serial.printf("Publishing on topic %s at QoS 1, packetId: %i ", MQTT_TOPIC, lastPacketId);
-  Serial.printf("Message: %s\n", message.c_str());
+  Serial.printf("Message: %.2f \n", message);
 
   publishRetryTimer.once(2, retryPublish);
   lastMessage = message;
@@ -153,8 +165,19 @@ void onMqttUnsubscribe(uint16_t packetId) {
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  char message[len + 1];
-  memcpy(message, payload, len);
-  message[len] = '\0';
-  Serial.println(message);
+  Serial.println("Publish received.");
+  Serial.print("  topic: ");
+  Serial.println(topic);
+  Serial.print("  qos: ");
+  Serial.println(properties.qos);
+  Serial.print("  dup: ");
+  Serial.println(properties.dup);
+  Serial.print("  retain: ");
+  Serial.println(properties.retain);
+  Serial.print("  len: ");
+  Serial.println(len);
+  Serial.print("  index: ");
+  Serial.println(index);
+  Serial.print("  total: ");
+  Serial.println(total);
 }

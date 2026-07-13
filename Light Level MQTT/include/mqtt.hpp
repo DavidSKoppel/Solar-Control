@@ -125,7 +125,7 @@ void retryPublish() {
 }
 
 void publishMessage(String message) {
-  lastPacketId = mqttClient.publish(MQTT_TOPIC, 1, false, message.c_str());
+  lastPacketId = mqttClient.publish(MQTT_TOPIC, 1, true, message.c_str());
   messageAcknowledged = false;
   Serial.printf("Publishing on topic %s at QoS 1, packetId: %i ", MQTT_TOPIC, lastPacketId);
   Serial.printf("Message: %s\n", message.c_str());
